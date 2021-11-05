@@ -1,0 +1,10 @@
+# File: lib/sites_urls
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+local -A sites_urls
+sites_urls=(
+    "gh"    "github.com"
+    "bb"    "bitbucket.org"
+    "gl"    "gitlab.com"
+)

@@ -1,0 +1,137 @@
+# File: giturl.main
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+integer GU_HELP=0 GU_VERBOSE=0 GU_QUIET=0 GU_NOANSI=0 GU_DECODE=0
+local GU_PATH GU_REVISION
+local -A opthash
+zparseopts -E -D -A opthash h -help v -verbose q -quiet n -noansi p: -path: r: -revision: d -decode || { echo "Improper options given, see help -h"; exit 1; }
+
+(( ${+opthash[-h]} + ${+opthash[--help]} ))     && GU_HELP=1
+(( ${+opthash[-v]} + ${+opthash[--verbose]} ))  && GU_VERBOSE=1
+(( ${+opthash[-q]} + ${+opthash[--quiet]} ))    && GU_QUIET=1
+(( ${+opthash[-n]} + ${+opthash[--noansi]} ))   && GU_NOANSI=1
+(( ${+opthash[-d]} + ${+opthash[--decode]} ))   && GU_DECODE=1
+(( ${+opthash[-p]} ))                           && GU_PATH=${opthash[-p]}
+(( ${+opthash[--path]} ))                       && GU_PATH=${opthash[--path]}
+(( ${+opthash[-r]} ))                           && GU_REVISION=${opthash[-r]}
+(( ${+opthash[--revision]} ))                   && GU_REVISION=${opthash[--revision]}
+
+(( GU_NOANSI )) && { colors=(); fg=(); bg=(); reset_color=""; }
+
+if (( GU_HELP )); then
+    Help
+    exit 0
+fi
+
+if (( GU_DECODE == 0 )); then
+    local protocol user site port upath
+
+    # Correct matches
+    if [[ "$1" = (#b)(git|http|https|ftp|ftps)://([a-zA-Z0-9._~-]##)(:[0-9]##)(#c0,1)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=${match[1]} site=${match[2]} port=${match[3]#:} upath=${match[4]}
+    elif [[ "$1" = (#b)rsync://([a-zA-Z0-9._~-]##)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=rsync site=${match[1]} upath=${match[2]}
+    elif [[ "$1" = (#b)ssh://([a-zA-Z0-9._~-]##@)(#c0,1)([a-zA-Z0-9._~-]##)(:[0-9]##)(#c0,1)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=ssh user=${match[1]%@} site=${match[2]} port=${match[3]#:} upath=${match[4]}
+    elif [[ "$1" = (#b)([a-zA-Z0-9._~-]##@)(#c0,1)([a-zA-Z0-9._~-]##):([a-zA-Z0-9./_~:-](#c0,1)[a-zA-Z0-9._~:-][a-zA-Z0-9./_~:-]#) ]]; then
+        protocol=ssh user=${match[1]%@} site=${match[2]} upath=${match[3]}
+
+    # Error matches
+    elif [[ "$1" = (#b)(git|http|https|ftp|ftps)://([^/:]##)(:[^/]##)(#c0,1)/(?*) ]]; then
+        if [[ -n "${match[3]}" && "${match[3]}" != :[0-9]## ]]; then
+            print "Incorrect port number: ${match[3]#:}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            else
+                print "Url part: ${match[4]}"
+            fi
+        fi
+        exit 2
+    elif [[ "$1" = (#b)ssh://([^@/]##@)(#c0,1)([^/:]##)(:[^/]##)(#c0,1)/(?*) ]]; then
+        if [[ -n "${match[1]}" && "${match[1]}" != [a-zA-Z0-9._~-]##@ ]]; then
+            print "Forbidden characters used in user name, allowed are [a-zA-Z0-9._~-]"
+            print "Obtained user name: ${match[1]%@}"
+        elif [[ -n "${match[3]}" && "${match[3]}" != :[0-9]## ]]; then
+            print "Incorrect port number: ${match[3]#:}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            else
+                print "Url part: ${match[4]}"
+            fi
+        fi
+        exit 3
+    elif [[ "$1" = (#b)rsync://([^/]##)/(?*) ]]; then
+        print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+        if [[ "${match[1]}" != [a-zA-Z0-9._~-]## ]]; then
+            print "Url part: ${match[1]}"
+        elif [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+            print "Url part: ${match[2]}"
+        fi
+        exit 4
+    elif [[ "$1" != (rsync|git|http|https|ftp|ftps|ssh)://* && $1 = (#b)([^/:]##)://* ]]; then
+        print "Unsupported protocol: ${match[1]}"
+        exit 5
+    elif [[ "$1" != (rsync|git|http|https|ftp|ftps|ssh)://* && "$1" = (#b)([^@/]##@)(#c0,1)([^:]##):(*?) ]]; then
+        if [[ -n "${match[1]}" && "${match[1]}" != [a-zA-Z0-9._~-]##@ ]]; then
+            print "Forbidden characters used in user name, allowed are [a-zA-Z0-9._~-]"
+            print "Obtained user name: ${match[1]%@}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            elif [[ "${match[3]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[3]}"
+            fi
+        fi
+        exit 6
+    else
+        print "Unrecognized url given: \`$1', aborting"
+        exit 7
+    fi
+
+    (( GU_QUIET )) || { print; PresentData "$protocol" "$user" "$site" "$port" "$upath" "$GU_REVISION" "$GU_PATH"; }
+
+    build_code "$protocol" "$user" "$site" "$port" "$upath" "$GU_REVISION" "$GU_PATH"
+
+    (( GU_QUIET )) || print
+    print $fg[magenta]"gitu://$REPLY"$reset_color
+else
+    local code="$1"
+    [[ "$code" = (#b)gitu://(*) ]] && code="${match[1]}"
+    [[ "$code" = (#b)//(*) ]] && code="${match[1]}"
+
+    if [[ "$code" != [0-9a-zA-ZµºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ]## ]]; then
+        print "${fg[red]}Error in code. First argument should be gitu://... or just gcode (with proper characters: 0-9 a-z A-Z [µºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ])${reset_color}"
+        exit 10
+    elif get_code_data "$code"; then
+        # $reply = ( file "" rev "" repo "" wordrev "" proto "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+        local -A mdata
+        mdata=( "${reply[@]}" )
+
+        local site="${mdata[site]}"
+        if [[ -z "$site" ]]; then
+            site="${mdata[site_inline]}"
+            [[ -z "$site" ]] && site="github.com"
+        else
+            site="${rserver_site[$site]}"
+        fi
+
+        if (( GU_QUIET )); then
+            PresentURL "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}" 1
+        else
+            PresentData "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}"
+            print
+            PresentURL "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}"
+        fi
+    else
+        print "${fg[red]}Cannot decode. Apparently, the gcode has correct characters, but the data contained is corrupted${reset_color}"
+        exit 9
+    fi
+fi
+
+exit 0

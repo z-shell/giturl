@@ -1,0 +1,80 @@
+#!/usr/bin/env zsh
+# File: lib/script_preamble
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+local ZERO="${(%):-%N}"
+local BIN_DIR="${ZERO:h}"
+
+# On asciinema 0 and ZERO are functionargzero
+[[ "$BIN_DIR" = "." ]] && BIN_DIR="/usr/local/bin"
+
+local SHARE_DIR="${BIN_DIR:h}/share"
+
+emulate -LR zsh
+
+[[ -z "$LANG" ]] && LANG="en_US.UTF-8"
+
+zmodload zsh/zutil
+
+setopt extendedglob typesetsilent warncreateglobal
+
+bindkey -e
+
+# FUNCTION: Help {{{
+Help() {
+    print -r "USAGE: giturl <URL> [options]
+       giturl -d <GitURL|gcode|//gcode>
+
+Options:
+ -h, --help              Print help and exit
+ -q, --quiet             Less verbose output
+ -n, --noansi            Don't use colors in output
+ -r <r>, --revision <r>  Which revision to encode in GitURL
+ -p <p>, --path <p>      A path to encode in GitURL
+ -d <c>, --decode <c>    GitURL or gcode to decode
+
+Examples:
+  giturl https://github.com/zdharma/giturl -p lib/codes_huffman
+  giturl -d 3ếЭãѿŒΓȏĤÒṄÅṥҫȜẙПȟϛṄӗŀєþ
+  giturl -d gitu://VЯĦṟěň4ӊǮ4ХƵȽȤẢ4ФḸțḊƵȽȟϛṄӗŀєþ"
+}
+# }}}
+# FUNCTION: SetMessage {{{
+SetMessage() {
+    echo "$1"
+}
+# }}}
+
+# FUNCTION: PresentData {{{
+PresentData() {
+    local proto="$1" user="$2" site="$3" port="$4" upath="$5" rev="$6" file="$7"
+    print "$fg[green]Protocol:$reset_color $proto"
+    [[ -n "$user" ]] && print "$fg[green]User:$reset_color     $user"
+    print "$fg[green]Site:$reset_color     $site"
+    [[ -n "$port" ]] && print "$fg[green]Port:$reset_color     $port"
+    print "$fg[yellow]Repo:$reset_color     $upath"
+    [[ -n "$rev" ]] && print "$fg[yellow]Revision:$reset_color $rev"
+    [[ -n "$file" ]] && print "$fg[red]File:$reset_color     $file"
+}
+# }}}
+
+# FUNCTION: PresentURL {{{
+PresentURL() {
+    local proto="$1" user="$2" site="$3" port="$4" upath="$5" rev="$6" file="$7" extended="${8:-0}"
+
+    local out="$proto"
+    out+="://$site"
+    [[ -n "$port" ]] && out+=":$port"
+    out+="/$upath"
+
+    if (( extended )); then
+        print -n "$fg[magenta]$out"
+        [[ -n "$rev" ]] && print -n " /  rev:$rev"
+        [[ -n "$file" ]] && print -n " /  file:$file"
+        print
+    else
+        print "$fg[magenta]$out"
+    fi
+}
+# }}}

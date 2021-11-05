@@ -1,0 +1,428 @@
+# File: lib/coding_functions
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+# FUNCTION: process_meta_data {{{
+# $1 - bits decoded from gcode
+# $REPLY = bits to skip
+# $reply = ( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+process_meta_data() {
+    local -a bits
+    bits=( "$@" )
+    integer size="$#" inline=0
+
+    bits=( "${(Oa)bits[@]}" )
+    local strbits="${(j::)bits}"
+    integer init_len="${#strbits}"
+
+    # Pop version bits
+    integer ver2="${strbits[1]}"
+    integer ver1="${strbits[2]}"
+    strbits="${strbits[3,-1]}"
+
+    local -A decoded
+    decoded=(
+        file ""
+        rev ""
+        repo ""
+        wordrev ""
+        proto ""
+        user ""
+        site ""
+        site_inline ""
+        flags ""
+        port ""
+        unused1 ""
+        unused2 ""
+        unused3 ""
+        unused4 ""
+        error ""
+    )
+
+    local current_selector="error"
+    integer trylen first=1
+    local mat trystr
+    while (( 1 )); do
+        if (( first )); then
+            mat="site_flags"
+            first=0
+        else
+            mat=""
+            for (( trylen=6; trylen <= 7; trylen ++ )); do
+                # Take substring of len $trylen and check if
+                # it matches any Huffman code
+                trystr="${strbits[1,trylen]}"
+                mat="${rcodes[$trystr]}"
+                [ -n "$mat" ] && break
+            done
+
+            # General failure in decoding the string
+            if [[ -z "$mat" ]]; then
+                REPLY="-1"
+                reply=( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 "" unused4 "" error "" )
+                return 1
+            fi
+
+            # Skip decoded bits
+            strbits="${strbits[trylen+1,-1]}"
+        fi
+
+        # Handle what has been matched, either selector or data
+        case "$mat" in
+            (ss)
+                break
+                ;;
+            (repo_rev_usr)
+                inline=0
+                if [[ "$current_selector" = "repo" ]]; then
+                    current_selector="rev"
+                elif [[ "$current_selector" = "rev" ]]; then
+                    current_selector="user"
+                else
+                    current_selector="repo"
+                fi
+                ;;
+            (file|wordrev)
+                inline=0
+                current_selector="$mat"
+                ;;
+            (site_flags)
+                [[ "$current_selector" = "site_flags" ]] && {
+                    inline=1
+                } || {
+                    inline=0
+                    current_selector="$mat"
+
+                    # Short path for port number - conditional constant 16 bits
+                    if [[ "${strbits[1]}" = "1" ]]; then
+                        local port_bits="${strbits[2,17]}"
+                        decoded[port]=$(( [#10] 2#$port_bits ))
+                        strbits="${strbits[18,-1]}"
+                    else
+                        strbits="${strbits[2,-1]}"
+                    fi
+
+                    # Short path for protocol - always 3 bits
+                    local proto_bits="${strbits[1,3]}"
+                    decoded[proto]="${rproto_code[$proto_bits]}"
+                    strbits="${strbits[4,-1]}"
+                }
+                ;;
+            (unused1|unused2|unused3|unused4)
+                inline=0
+                current_selector="$mat"
+                ;;
+            (*)
+                [[ "$current_selector" = "site_flags" ]] && {
+                    if (( inline )); then
+                        decoded[site_inline]+="$mat"
+                    else
+                        if [[ ${input_characters[(i)$mat]} -gt ${input_characters[(i)3]} ]]; then
+                            mat="${rsites_flags[$mat]}"
+                            [[ -n "${decoded[flags]}" ]] && decoded[flags]+=","
+                            decoded[flags]+="$mat"
+                        else
+                            mat="${rsites_flags[$mat]}"
+                            decoded[site]="$mat"
+                        fi
+                    fi
+                } || {
+                    decoded[$current_selector]+="$mat"
+                }
+                ;;
+        esac
+    done
+
+    REPLY="$(( init_len - ${#strbits} ))"
+    reply=( "${(kv)decoded[@]}" )
+
+    return 0
+}
+# }}}
+# FUNCTION: get_code_data {{{
+#
+# Gets meta data: rev, file, repo and puts it into $reply array
+# REPLY has the revision bits
+get_code_data() {
+    local gcode="$1"
+    decode_gcode "$gcode" || return $?
+
+    local -a bits
+    bits=( "${reply[@]}" )
+
+    process_meta_data "${bits[@]}" || return $?
+
+    # $reply = ( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+    # $REPLY contains: number of bits that contained the meta data
+    local -a meta_reply
+    meta_reply=( "${reply[@]}" )
+
+    # Skip bits that were processed as meta data
+    bits=( "${(@)bits[1,-1*REPLY-1]}" )
+
+    REPLY="${bits[*]}"
+    reply=( "${meta_reply[@]}" )
+}
+# }}}
+# FUNCTION: bits_start {{{
+bits_start() {
+    reply=( "${(@s::)codes[ss]}" )
+}
+# }}}
+# FUNCTION: bits_stop {{{
+bits_stop() {
+    reply=( "${(@s::)codes[ss]}" )
+}
+# }}}
+# FUNCTION: bits_rev {{{
+bits_rev() {
+    local -a bits
+    local rev="$1" lt
+
+    for lt in "${(@s::)rev}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in rev name: '$lt', trying to continue"
+        fi
+    done
+
+    # Rev preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_user {{{
+bits_user() {
+    local -a bits
+    local user="$1" lt
+
+    for lt in "${(@s::)user}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in user name: '$lt', trying to continue"
+        fi
+    done
+
+    # Rev preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_path {{{
+bits_path() {
+    local -a bits
+    local file="$1" lt
+
+    for lt in "${(@s::)file}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in file name: '$lt', trying to continue"
+        fi
+    done
+
+    # File preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[file]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_repo {{{
+bits_repo() {
+    local -a bits
+    local repo="$1" lt
+
+    for lt in "${(@s::)repo}"; do
+        if [[ -n "${codes[$lt]}" ]]; then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in repo name: '$lt', trying to continue"
+        fi
+    done
+
+    # Repo preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_proto_site_port {{{
+bits_proto_site_port() {
+    local -a bits
+    local proto="$1" site="$2" port="$3" lt
+
+    reply=()
+
+    #
+    # Port
+    #
+
+    if [[ -n "$port" ]]; then
+        bits+=( 1 )
+        local bin_port
+        bin_port=$(( [##2] port ))
+        bin_port="${(l:16::0:)bin_port}"
+        bits+=( ${(@s::)bin_port} )
+    else
+        bits+=( 0 )
+    fi
+
+    #
+    # Protocol
+    #
+
+    local proto_bits="${proto_code[$proto]}"
+    [[ ${#proto_bits} -eq 3 ]] || proto_bits="111"
+    bits+=( "${(@s::)proto_bits}" )
+
+    #
+    # Site
+    #
+
+    integer skip=0
+    if [[ -n "${server_site[${(L)site}]}" ]]; then
+        site="${server_site[${(L)site}]}"
+    else
+        skip=1
+    fi
+
+    if (( skip )); then
+        # Repeated site_flags preamble indicating inline-site
+        bits+=( "${(@s::)codes[site_flags]}" )
+        for lt in "${(@s::)site}"; do
+            if [[ -n "${codes[$lt]}" ]];then
+                bits+=( "${(@s::)codes[$lt]}" )
+            elif [[ -n "$lt" ]]; then
+                SetMessage "Incorrect character in server-part of URL: '$lt', trying to continue"
+            fi
+        done
+    else
+        # Github is the default site
+        [[ "$site" = "gh" ]] && skip=1
+
+        local site_lt="${sites_flags[$site]}"
+        [[ -z "$site_lt" ]] && skip=1
+
+        (( skip )) || bits+=( "${(@s::)codes[$site_lt]}" )
+    fi
+
+    # Site preamble - not added
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_compare_suffix {{{
+bits_compare_suffix() {
+    local -a long_bits short_bits
+    long_bits=( "${(@s::)1}" )
+    short_bits=( "${(@s::)2}" )
+
+    if [[ "${#long_bits}" -lt "${#short_bits}" ]]; then
+        return 1
+    fi
+
+    # Check if short_bits occur at the end of long_bits
+    integer beg_idx=$(( ${#long_bits} - ${#short_bits} + 1 ))
+    integer end_idx="${#long_bits}"
+    integer l not_equal=0 s=1
+    for (( l=beg_idx; l <= end_idx; l++ )); do
+        if [[ "${long_bits[l]}" != "${short_bits[s]}" ]]; then
+            not_equal=1
+            break
+        fi
+        s+=1
+    done
+
+    return $not_equal
+}
+# }}}
+# FUNCTION: bits_remove_if_start_stop {{{
+bits_remove_if_start_stop() {
+    local -a appendix
+    appendix=( "$@" )
+
+    if bits_compare_suffix "${(j::)appendix}" "${codes[ss]}"; then
+        integer end_idx=$(( ${#appendix} - ${#codes[ss]} ))
+        appendix=( "${(@)appendix[1,end_idx]}" )
+
+        if bits_compare_suffix "${(j::)appendix}" "${codes[ss]}"; then
+            end_idx=$(( ${#appendix} - ${#codes[ss]} ))
+            appendix=( "${(@)appendix[1,end_idx]}" )
+
+            # Two consecutive SS bits occured, correct removal
+        else
+            # We couldn't remove second SS bits, so it means
+            # that there is some meta data, and we should
+            # restore already removed last SS bits
+            appendix+=( "${(@s::)codes[ss]}" )
+        fi
+    else
+        # This shouldn't happen, this function must be
+        # called after adding SS bits
+        reply=( "${appendix[@]}" )
+        return 1
+    fi
+
+    reply=( "${appendix[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: build_code {{{
+build_code() {
+    local proto="$1" user="$2" site="$3" port="$4" repo="$5" rev="$6" file_path="$7"
+
+    local -a bits appendix
+
+    bits_proto_site_port "$proto" "$site" "$port"
+    appendix+=( "${reply[@]}" )
+
+    # Repo is ensured to be always appended, even if somehow
+    # empty (should not happen)
+    bits_repo "$repo"
+    [[ "${#reply}" -gt 0 ]] && appendix+=( "${reply[@]}" ) || appendix+=( "${(@s::)codes[repo_rev_usr]}" )
+
+    # Rev is always appended even if empty, the rationale is
+    # that without rev, url will be probably (...) short anyway.
+    # Also, the main motivation to use giturl is to embed revision
+    bits_rev "$rev"
+    [[ "${#reply}" -gt 0 ]] && appendix+=( "${reply[@]}" ) || appendix+=( "${(@s::)codes[repo_rev_usr]}" )
+
+    # User is normal, optional
+    bits_user "$user"
+    appendix+=( "${reply[@]}" )
+
+    bits_path "$file_path"
+    appendix+=( "${reply[@]}" )
+
+    bits_stop
+    appendix+=( "${reply[@]}" )
+
+    # Paranoid support for empty meta-data
+    bits_remove_if_start_stop "${appendix[@]}"
+    appendix=( "${reply[@]}" )
+
+    appendix=( "${(Oa)appendix[@]}" )
+    # Also include version bits 0 0
+    bits=( "${bits[@]}" "${appendix[@]}" 0 0 )
+    # print "${(j::)bits}"
+
+    encode_gcode_arr01 "${bits[@]}"
+}
+# }}}

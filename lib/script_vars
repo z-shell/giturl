@@ -1,0 +1,12 @@
+# File: lib/script_vars
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+zmodload zsh/terminfo 2>/dev/null
+if [[ ( -n "${terminfo[colors]}" || -n "${termcap[Co]}" ) && -z "${functions[colors]}" ]]; then
+    builtin autoload -Uz colors
+    colors
+fi
+
+local REPLY
+local -a reply
