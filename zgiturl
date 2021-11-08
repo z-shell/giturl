@@ -1,0 +1,1309 @@
+#!/usr/bin/env zsh
+# File: lib/script_preamble
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+local ZERO="${(%):-%N}"
+local BIN_DIR="${ZERO:h}"
+
+# On asciinema 0 and ZERO are functionargzero
+[[ "$BIN_DIR" = "." ]] && BIN_DIR="/usr/local/bin"
+
+local SHARE_DIR="${BIN_DIR:h}/share"
+
+emulate -LR zsh
+
+[[ -z "$LANG" ]] && LANG="en_US.UTF-8"
+
+zmodload zsh/zutil
+
+setopt extendedglob typesetsilent warncreateglobal
+
+bindkey -e
+
+# FUNCTION: Help {{{
+Help() {
+    print -r "USAGE: giturl <URL> [options]
+       giturl -d <GitURL|gcode|//gcode>
+
+Options:
+ -h, --help              Print help and exit
+ -q, --quiet             Less verbose output
+ -n, --noansi            Don't use colors in output
+ -r <r>, --revision <r>  Which revision to encode in GitURL
+ -p <p>, --path <p>      A path to encode in GitURL
+ -d <c>, --decode <c>    GitURL or gcode to decode
+
+Examples:
+  giturl https://github.com/z-shell/giturl -p lib/codes_huffman
+  giturl -d 3ếЭãѿŒΓȏĤÒṄÅṥҫȜẙПȟϛṄӗŀєþ
+  giturl -d gitu://VЯĦṟěň4ӊǮ4ХƵȽȤẢ4ФḸțḊƵȽȟϛṄӗŀєþ"
+}
+# }}}
+# FUNCTION: SetMessage {{{
+SetMessage() {
+    echo "$1"
+}
+# }}}
+
+# FUNCTION: PresentData {{{
+PresentData() {
+    local proto="$1" user="$2" site="$3" port="$4" upath="$5" rev="$6" file="$7"
+    print "$fg[green]Protocol:$reset_color $proto"
+    [[ -n "$user" ]] && print "$fg[green]User:$reset_color     $user"
+    print "$fg[green]Site:$reset_color     $site"
+    [[ -n "$port" ]] && print "$fg[green]Port:$reset_color     $port"
+    print "$fg[yellow]Repo:$reset_color     $upath"
+    [[ -n "$rev" ]] && print "$fg[yellow]Revision:$reset_color $rev"
+    [[ -n "$file" ]] && print "$fg[red]File:$reset_color     $file"
+}
+# }}}
+
+# FUNCTION: PresentURL {{{
+PresentURL() {
+    local proto="$1" user="$2" site="$3" port="$4" upath="$5" rev="$6" file="$7" extended="${8:-0}"
+
+    local out="$proto"
+    out+="://$site"
+    [[ -n "$port" ]] && out+=":$port"
+    out+="/$upath"
+
+    if (( extended )); then
+        print -n "$fg[magenta]$out"
+        [[ -n "$rev" ]] && print -n " /  rev:$rev"
+        [[ -n "$file" ]] && print -n " /  file:$file"
+        print
+    else
+        print "$fg[magenta]$out"
+    fi
+}
+# }}}
+# File: lib/script_vars
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+zmodload zsh/terminfo 2>/dev/null
+if [[ ( -n "${terminfo[colors]}" || -n "${termcap[Co]}" ) && -z "${functions[colors]}" ]]; then
+    builtin autoload -Uz colors
+    colors
+fi
+
+local REPLY
+local -a reply
+# File: lib/math_functions
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+local -a input_characters
+input_characters=(
+    0 1 2 3 4 5 6 7 8 9
+    a b c d e f g h i j k l m n o p q r s t u v w x y z
+    A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
+    '.' '_' '~' '-'
+)
+
+local -a characters
+characters=( 0 1 2 3 4 5 6 7 8 9 a b c d e f g h i j k l m n o p q r s t u v w x y z A B C D E F G H I J K L M N O P Q R S T U V W X Y Z
+
+# Latin-1 Supplement [µºÀ-ÖØ-áãäæ-öøú-ÿ]
+µ º À Á Â Ã Ä Å Æ Ç È É Ê Ë Ì Í Î Ï Ð Ñ Ò Ó Ô Õ Ö Ø Ù Ú Û Ü Ý Þ ß à á ã ä æ ç è é ê ë ì í î ï ð ñ ò ó ô õ ö ø ú û ü ý þ ÿ
+
+# Latin Extended-A [ÿ-ſ]
+Ā ā Ă ă Ą ą Ć ć Ĉ ĉ Ċ ċ Č č Ď ď Đ đ Ē ē Ĕ ĕ Ė ė Ę ę Ě ě Ĝ ĝ Ğ ğ Ġ ġ Ģ ģ Ĥ ĥ Ħ ħ Ĩ ĩ Ī ī Ĭ ĭ Į į İ ı Ĳ ĳ Ĵ ĵ Ķ ķ ĸ Ĺ ĺ Ļ ļ Ľ ľ Ŀ ŀ Ł ł Ń ń
+Ņ ņ Ň ň ŉ Ŋ ŋ Ō ō Ŏ ŏ Ő ő Œ œ Ŕ ŕ Ŗ ŗ Ř ř Ś ś Ŝ ŝ Ş ş Š š Ţ ţ Ť ť Ŧ ŧ Ũ ũ Ū ū Ŭ ŭ Ů ů Ű ű Ų ų Ŵ ŵ Ŷ ŷ Ÿ Ź ź Ż ż Ž ž ſ
+
+# Latin Extended-B [ſ-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏ]
+ƀ Ɓ Ƃ ƃ Ƅ ƅ Ɔ Ƈ ƈ Ɖ Ɗ Ƌ ƌ ƍ Ǝ Ə Ɛ Ƒ ƒ Ɠ Ɣ Ɩ Ɨ Ƙ ƙ ƚ ƛ Ɯ Ɲ ƞ Ɵ Ơ ơ Ƥ ƥ Ʀ Ƨ ƨ Ʃ ƪ ƫ Ƭ ƭ Ʈ Ư ư Ʊ Ʋ Ƴ ƴ Ƶ ƶ Ʒ Ƹ ƹ ƺ ƻ Ƽ
+ƽ ƾ ƿ ǀ ǁ ǂ ǃ Ǎ ǎ Ǐ ǐ Ǒ ǒ Ǔ ǔ Ǖ ǖ Ǘ ǘ Ǚ ǚ Ǜ ǜ ǝ Ǟ ǟ Ǡ ǡ Ǣ ǣ Ǥ ǥ Ǧ ǧ Ǩ ǩ Ǫ ǫ Ǭ ǭ Ǯ ǯ ǰ Ǳ ǳ Ǵ ǵ Ƿ Ǹ ǹ Ǻ ǻ Ǽ ǽ Ǿ ǿ Ȁ ȁ
+Ȃ ȃ Ȅ ȅ Ȇ ȇ Ȉ ȉ Ȋ ȋ Ȍ ȍ Ȏ ȏ Ȑ ȑ Ȓ ȓ Ȕ ȕ Ȗ ȗ Ș ș Ț ț Ȝ ȝ Ȟ ȟ Ƞ ȡ Ȣ ȣ Ȥ ȥ Ȧ ȧ Ȩ ȩ Ȫ ȫ Ȭ ȭ Ȯ ȯ Ȱ ȱ Ȳ ȳ ȴ ȵ ȶ ȷ ȸ ȹ Ⱥ Ȼ
+ȼ Ƚ Ⱦ ȿ ɀ Ɂ ɂ Ƀ Ʉ Ʌ Ɇ ɇ Ɉ ɋ Ɍ ɍ Ɏ ɏ
+
+# Latin Extended Additional [Ḁ-ẝẟ-ỹỻ]
+Ḁ ḁ Ḃ ḃ Ḅ ḅ Ḇ ḇ Ḉ ḉ Ḋ ḋ Ḍ ḍ Ḏ ḏ Ḑ ḑ Ḓ ḓ Ḕ ḕ Ḗ ḗ Ḙ ḙ Ḛ ḛ Ḝ ḝ Ḟ ḟ Ḡ ḡ Ḣ ḣ Ḥ ḥ Ḧ ḧ Ḩ ḩ Ḫ ḫ Ḭ ḭ Ḯ ḯ Ḱ ḱ Ḳ ḳ Ḵ
+ḵ Ḷ ḷ Ḹ ḹ Ḻ ḻ Ḽ ḽ Ḿ ḿ Ṁ ṁ Ṃ ṃ Ṅ ṅ Ṇ ṇ Ṉ ṉ Ṋ ṋ Ṍ ṍ Ṏ ṏ Ṑ ṑ Ṓ ṓ Ṕ ṕ Ṗ ṗ Ṙ ṙ Ṛ ṛ Ṝ ṝ Ṟ ṟ Ṡ ṡ Ṣ ṣ Ṥ ṥ Ṧ ṧ Ṩ ṩ
+Ṫ ṫ Ṭ ṭ Ṯ ṯ Ṱ ṱ Ṳ ṳ Ṵ ṵ Ṷ ṷ Ṹ ṹ Ṻ ṻ Ṽ ṽ Ṿ ṿ Ẁ ẁ Ẃ ẃ Ẅ ẅ Ẇ ẇ Ẉ ẉ Ẋ ẋ Ẍ ẍ Ẏ ẏ Ẑ ẑ Ẓ ẓ Ẕ ẕ ẖ ẗ ẘ ẙ ẚ ẛ ẜ ẝ ẟ
+Ạ ạ Ả ả Ấ ấ Ầ ầ Ẩ ẩ Ẫ ẫ Ậ ậ Ắ ắ Ằ ằ Ẳ ẳ Ẵ ẵ Ặ ặ Ẹ ẹ Ẻ ẻ Ẽ ẽ Ế ế Ề ề Ể ể Ễ ễ Ệ ệ Ỉ ỉ Ị ị Ọ ọ Ỏ ỏ Ố ố Ồ ồ Ổ
+ổ Ỗ ỗ Ộ ộ Ớ ớ Ờ ờ Ở ở Ỡ ỡ Ợ ợ Ụ ụ Ủ ủ Ứ ứ Ừ ừ Ử ử Ữ ữ Ự ự Ỳ ỳ Ỵ ỵ Ỷ ỷ Ỹ ỹ ỻ
+
+# Greek and Coptic [ͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-Ͽ]
+ͻ ͼ ͽ Ά Έ Α Β Γ Δ Ε Ζ Η Θ Ι Κ Λ Μ Ν Ξ Ο Π Ρ Σ Τ Υ Φ Χ Ψ Ω Ϋ ά έ ή ί ΰ α β γ δ ε ζ η θ ι κ λ μ ν ξ ο π ρ ς
+σ τ υ φ χ ψ ϋ ό ύ ώ ϐ ϑ ϒ ϔ ϕ ϖ ϗ Ϙ ϙ Ϛ ϛ Ϝ ϝ Ϟ ϟ Ϡ ϥ ϧ Ϩ ϩ ϫ Ϭ ϭ Ϯ ϯ ϰ ϱ ϲ ϵ Ϸ ϸ Ϲ ϻ ϼ Ͻ Ͼ Ͽ
+
+# Cyrillic [Ѐ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿ]
+Ѐ Ё Ђ Ѓ Є Ѕ І Ї Ј Љ Њ Ћ Ќ Ѝ Ў Џ А Б В Г Д Е Ж З И Й К Л М Н О П Р С Т У Ф Х Ц Ч Ш Щ Ъ Ы Ь Э Ю Я а б в г д
+е ж з и й к л м н о п р с т у ф х ц ч ш щ ъ ы ь э ю я ѐ ё ђ ѓ є ѕ і ї ј љ њ ћ ќ ѝ ў џ ѡ Ѣ ѣ ѥ ѫ ѱ Ѳ ѳ ѵ ѷ
+ѻ ѽ ѿ Ҁ ҁ ҋ Ҍ ҍ Ҏ ҏ Ґ ґ Ғ ғ Ҕ ҕ Җ җ Ҙ ҙ Қ қ Ҝ ҝ Ҟ ҟ ҡ Ң ң Ҥ ҥ ҩ Ҫ ҫ Ҭ ҭ Ү ү Ұ ұ Ҳ ҳ ҵ Ҷ ҷ Ҹ ҹ Һ һ Ӏ Ӂ ӂ Ӄ
+ӄ Ӆ ӆ Ӈ ӈ Ӊ ӊ Ӌ ӌ ӎ Ӑ ӑ Ӓ ӓ Ӕ ӕ Ӗ ӗ Ә ә Ӛ ӛ Ӝ ӝ Ӟ ӟ Ӡ ӡ Ӣ ӣ Ӥ ӥ Ӧ ӧ Ө ө Ӫ ӫ Ӭ ӭ Ӯ ӯ Ӱ ӱ Ӳ ӳ Ӵ ӵ Ӷ ӷ Ӹ ӹ Ӻ
+ӻ Ӽ ӽ Ӿ ӿ
+
+# Hebrew [א-דטך-מס-שװ] / [א-דטך-מס-פ]
+א ב ג ד ט ך כ ל ם מ ס ע ף פ ץ צ ק ר ש װ
+
+# Character class for all: [0-9a-zA-ZµºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ]
+)
+
+local -A characters_map
+characters_map=(
+0 0 1 1 2 2 3 3 4 4 5 5 6 6 7 7 8 8 9 9 a 10 b 11 c 12 d 13 e 14 f 15 g 16
+h 17 i 18 j 19 k 20 l 21 m 22 n 23 o 24 p 25 q 26 r 27 s 28 t 29 u 30 v 31 w 32 x 33
+y 34 z 35 A 36 B 37 C 38 D 39 E 40 F 41 G 42 H 43 I 44 J 45 K 46 L 47 M 48 N 49 O 50
+P 51 Q 52 R 53 S 54 T 55 U 56 V 57 W 58 X 59 Y 60 Z 61 µ 62 º 63 À 64 Á 65 Â 66 Ã 67
+Ä 68 Å 69 Æ 70 Ç 71 È 72 É 73 Ê 74 Ë 75 Ì 76 Í 77 Î 78 Ï 79 Ð 80 Ñ 81 Ò 82 Ó 83 Ô 84
+Õ 85 Ö 86 Ø 87 Ù 88 Ú 89 Û 90 Ü 91 Ý 92 Þ 93 ß 94 à 95 á 96 ã 97 ä 98 æ 99 ç 100 è 101
+é 102 ê 103 ë 104 ì 105 í 106 î 107 ï 108 ð 109 ñ 110 ò 111 ó 112 ô 113 õ 114 ö 115 ø 116 ú 117 û 118
+ü 119 ý 120 þ 121 ÿ 122 Ā 123 ā 124 Ă 125 ă 126 Ą 127 ą 128 Ć 129 ć 130 Ĉ 131 ĉ 132 Ċ 133 ċ 134 Č 135
+č 136 Ď 137 ď 138 Đ 139 đ 140 Ē 141 ē 142 Ĕ 143 ĕ 144 Ė 145 ė 146 Ę 147 ę 148 Ě 149 ě 150 Ĝ 151 ĝ 152
+Ğ 153 ğ 154 Ġ 155 ġ 156 Ģ 157 ģ 158 Ĥ 159 ĥ 160 Ħ 161 ħ 162 Ĩ 163 ĩ 164 Ī 165 ī 166 Ĭ 167 ĭ 168 Į 169
+į 170 İ 171 ı 172 Ĳ 173 ĳ 174 Ĵ 175 ĵ 176 Ķ 177 ķ 178 ĸ 179 Ĺ 180 ĺ 181 Ļ 182 ļ 183 Ľ 184 ľ 185 Ŀ 186
+ŀ 187 Ł 188 ł 189 Ń 190 ń 191 Ņ 192 ņ 193 Ň 194 ň 195 ŉ 196 Ŋ 197 ŋ 198 Ō 199 ō 200 Ŏ 201 ŏ 202 Ő 203
+ő 204 Œ 205 œ 206 Ŕ 207 ŕ 208 Ŗ 209 ŗ 210 Ř 211 ř 212 Ś 213 ś 214 Ŝ 215 ŝ 216 Ş 217 ş 218 Š 219 š 220
+Ţ 221 ţ 222 Ť 223 ť 224 Ŧ 225 ŧ 226 Ũ 227 ũ 228 Ū 229 ū 230 Ŭ 231 ŭ 232 Ů 233 ů 234 Ű 235 ű 236 Ų 237
+ų 238 Ŵ 239 ŵ 240 Ŷ 241 ŷ 242 Ÿ 243 Ź 244 ź 245 Ż 246 ż 247 Ž 248 ž 249 ſ 250 ƀ 251 Ɓ 252 Ƃ 253 ƃ 254
+Ƅ 255 ƅ 256 Ɔ 257 Ƈ 258 ƈ 259 Ɖ 260 Ɗ 261 Ƌ 262 ƌ 263 ƍ 264 Ǝ 265 Ə 266 Ɛ 267 Ƒ 268 ƒ 269 Ɠ 270 Ɣ 271
+Ɩ 272 Ɨ 273 Ƙ 274 ƙ 275 ƚ 276 ƛ 277 Ɯ 278 Ɲ 279 ƞ 280 Ɵ 281 Ơ 282 ơ 283 Ƥ 284 ƥ 285 Ʀ 286 Ƨ 287 ƨ 288
+Ʃ 289 ƪ 290 ƫ 291 Ƭ 292 ƭ 293 Ʈ 294 Ư 295 ư 296 Ʊ 297 Ʋ 298 Ƴ 299 ƴ 300 Ƶ 301 ƶ 302 Ʒ 303 Ƹ 304 ƹ 305
+ƺ 306 ƻ 307 Ƽ 308 ƽ 309 ƾ 310 ƿ 311 ǀ 312 ǁ 313 ǂ 314 ǃ 315 Ǎ 316 ǎ 317 Ǐ 318 ǐ 319 Ǒ 320 ǒ 321 Ǔ 322
+ǔ 323 Ǖ 324 ǖ 325 Ǘ 326 ǘ 327 Ǚ 328 ǚ 329 Ǜ 330 ǜ 331 ǝ 332 Ǟ 333 ǟ 334 Ǡ 335 ǡ 336 Ǣ 337 ǣ 338 Ǥ 339
+ǥ 340 Ǧ 341 ǧ 342 Ǩ 343 ǩ 344 Ǫ 345 ǫ 346 Ǭ 347 ǭ 348 Ǯ 349 ǯ 350 ǰ 351 Ǳ 352 ǳ 353 Ǵ 354 ǵ 355 Ƿ 356
+Ǹ 357 ǹ 358 Ǻ 359 ǻ 360 Ǽ 361 ǽ 362 Ǿ 363 ǿ 364 Ȁ 365 ȁ 366 Ȃ 367 ȃ 368 Ȅ 369 ȅ 370 Ȇ 371 ȇ 372 Ȉ 373
+ȉ 374 Ȋ 375 ȋ 376 Ȍ 377 ȍ 378 Ȏ 379 ȏ 380 Ȑ 381 ȑ 382 Ȓ 383 ȓ 384 Ȕ 385 ȕ 386 Ȗ 387 ȗ 388 Ș 389 ș 390
+Ț 391 ț 392 Ȝ 393 ȝ 394 Ȟ 395 ȟ 396 Ƞ 397 ȡ 398 Ȣ 399 ȣ 400 Ȥ 401 ȥ 402 Ȧ 403 ȧ 404 Ȩ 405 ȩ 406 Ȫ 407
+ȫ 408 Ȭ 409 ȭ 410 Ȯ 411 ȯ 412 Ȱ 413 ȱ 414 Ȳ 415 ȳ 416 ȴ 417 ȵ 418 ȶ 419 ȷ 420 ȸ 421 ȹ 422 Ⱥ 423 Ȼ 424
+ȼ 425 Ƚ 426 Ⱦ 427 ȿ 428 ɀ 429 Ɂ 430 ɂ 431 Ƀ 432 Ʉ 433 Ʌ 434 Ɇ 435 ɇ 436 Ɉ 437 ɋ 438 Ɍ 439 ɍ 440 Ɏ 441
+ɏ 442 Ḁ 443 ḁ 444 Ḃ 445 ḃ 446 Ḅ 447 ḅ 448 Ḇ 449 ḇ 450 Ḉ 451 ḉ 452 Ḋ 453 ḋ 454 Ḍ 455 ḍ 456 Ḏ 457 ḏ 458
+Ḑ 459 ḑ 460 Ḓ 461 ḓ 462 Ḕ 463 ḕ 464 Ḗ 465 ḗ 466 Ḙ 467 ḙ 468 Ḛ 469 ḛ 470 Ḝ 471 ḝ 472 Ḟ 473 ḟ 474 Ḡ 475
+ḡ 476 Ḣ 477 ḣ 478 Ḥ 479 ḥ 480 Ḧ 481 ḧ 482 Ḩ 483 ḩ 484 Ḫ 485 ḫ 486 Ḭ 487 ḭ 488 Ḯ 489 ḯ 490 Ḱ 491 ḱ 492
+Ḳ 493 ḳ 494 Ḵ 495 ḵ 496 Ḷ 497 ḷ 498 Ḹ 499 ḹ 500 Ḻ 501 ḻ 502 Ḽ 503 ḽ 504 Ḿ 505 ḿ 506 Ṁ 507 ṁ 508 Ṃ 509
+ṃ 510 Ṅ 511 ṅ 512 Ṇ 513 ṇ 514 Ṉ 515 ṉ 516 Ṋ 517 ṋ 518 Ṍ 519 ṍ 520 Ṏ 521 ṏ 522 Ṑ 523 ṑ 524 Ṓ 525 ṓ 526
+Ṕ 527 ṕ 528 Ṗ 529 ṗ 530 Ṙ 531 ṙ 532 Ṛ 533 ṛ 534 Ṝ 535 ṝ 536 Ṟ 537 ṟ 538 Ṡ 539 ṡ 540 Ṣ 541 ṣ 542 Ṥ 543
+ṥ 544 Ṧ 545 ṧ 546 Ṩ 547 ṩ 548 Ṫ 549 ṫ 550 Ṭ 551 ṭ 552 Ṯ 553 ṯ 554 Ṱ 555 ṱ 556 Ṳ 557 ṳ 558 Ṵ 559 ṵ 560
+Ṷ 561 ṷ 562 Ṹ 563 ṹ 564 Ṻ 565 ṻ 566 Ṽ 567 ṽ 568 Ṿ 569 ṿ 570 Ẁ 571 ẁ 572 Ẃ 573 ẃ 574 Ẅ 575 ẅ 576 Ẇ 577
+ẇ 578 Ẉ 579 ẉ 580 Ẋ 581 ẋ 582 Ẍ 583 ẍ 584 Ẏ 585 ẏ 586 Ẑ 587 ẑ 588 Ẓ 589 ẓ 590 Ẕ 591 ẕ 592 ẖ 593 ẗ 594
+ẘ 595 ẙ 596 ẚ 597 ẛ 598 ẜ 599 ẝ 600 ẟ 601 Ạ 602 ạ 603 Ả 604 ả 605 Ấ 606 ấ 607 Ầ 608 ầ 609 Ẩ 610 ẩ 611
+Ẫ 612 ẫ 613 Ậ 614 ậ 615 Ắ 616 ắ 617 Ằ 618 ằ 619 Ẳ 620 ẳ 621 Ẵ 622 ẵ 623 Ặ 624 ặ 625 Ẹ 626 ẹ 627 Ẻ 628
+ẻ 629 Ẽ 630 ẽ 631 Ế 632 ế 633 Ề 634 ề 635 Ể 636 ể 637 Ễ 638 ễ 639 Ệ 640 ệ 641 Ỉ 642 ỉ 643 Ị 644 ị 645
+Ọ 646 ọ 647 Ỏ 648 ỏ 649 Ố 650 ố 651 Ồ 652 ồ 653 Ổ 654 ổ 655 Ỗ 656 ỗ 657 Ộ 658 ộ 659 Ớ 660 ớ 661 Ờ 662
+ờ 663 Ở 664 ở 665 Ỡ 666 ỡ 667 Ợ 668 ợ 669 Ụ 670 ụ 671 Ủ 672 ủ 673 Ứ 674 ứ 675 Ừ 676 ừ 677 Ử 678 ử 679
+Ữ 680 ữ 681 Ự 682 ự 683 Ỳ 684 ỳ 685 Ỵ 686 ỵ 687 Ỷ 688 ỷ 689 Ỹ 690 ỹ 691 ỻ 692 ͻ 693 ͼ 694 ͽ 695 Ά 696
+Έ 697 Α 698 Β 699 Γ 700 Δ 701 Ε 702 Ζ 703 Η 704 Θ 705 Ι 706 Κ 707 Λ 708 Μ 709 Ν 710 Ξ 711 Ο 712 Π 713
+Ρ 714 Σ 715 Τ 716 Υ 717 Φ 718 Χ 719 Ψ 720 Ω 721 Ϋ 722 ά 723 έ 724 ή 725 ί 726 ΰ 727 α 728 β 729 γ 730
+δ 731 ε 732 ζ 733 η 734 θ 735 ι 736 κ 737 λ 738 μ 739 ν 740 ξ 741 ο 742 π 743 ρ 744 ς 745 σ 746 τ 747
+υ 748 φ 749 χ 750 ψ 751 ϋ 752 ό 753 ύ 754 ώ 755 ϐ 756 ϑ 757 ϒ 758 ϔ 759 ϕ 760 ϖ 761 ϗ 762 Ϙ 763 ϙ 764
+Ϛ 765 ϛ 766 Ϝ 767 ϝ 768 Ϟ 769 ϟ 770 Ϡ 771 ϥ 772 ϧ 773 Ϩ 774 ϩ 775 ϫ 776 Ϭ 777 ϭ 778 Ϯ 779 ϯ 780 ϰ 781
+ϱ 782 ϲ 783 ϵ 784 Ϸ 785 ϸ 786 Ϲ 787 ϻ 788 ϼ 789 Ͻ 790 Ͼ 791 Ͽ 792 Ѐ 793 Ё 794 Ђ 795 Ѓ 796 Є 797 Ѕ 798
+І 799 Ї 800 Ј 801 Љ 802 Њ 803 Ћ 804 Ќ 805 Ѝ 806 Ў 807 Џ 808 А 809 Б 810 В 811 Г 812 Д 813 Е 814 Ж 815
+З 816 И 817 Й 818 К 819 Л 820 М 821 Н 822 О 823 П 824 Р 825 С 826 Т 827 У 828 Ф 829 Х 830 Ц 831 Ч 832
+Ш 833 Щ 834 Ъ 835 Ы 836 Ь 837 Э 838 Ю 839 Я 840 а 841 б 842 в 843 г 844 д 845 е 846 ж 847 з 848 и 849
+й 850 к 851 л 852 м 853 н 854 о 855 п 856 р 857 с 858 т 859 у 860 ф 861 х 862 ц 863 ч 864 ш 865 щ 866
+ъ 867 ы 868 ь 869 э 870 ю 871 я 872 ѐ 873 ё 874 ђ 875 ѓ 876 є 877 ѕ 878 і 879 ї 880 ј 881 љ 882 њ 883
+ћ 884 ќ 885 ѝ 886 ў 887 џ 888 ѡ 889 Ѣ 890 ѣ 891 ѥ 892 ѫ 893 ѱ 894 Ѳ 895 ѳ 896 ѵ 897 ѷ 898 ѻ 899 ѽ 900
+ѿ 901 Ҁ 902 ҁ 903 ҋ 904 Ҍ 905 ҍ 906 Ҏ 907 ҏ 908 Ґ 909 ґ 910 Ғ 911 ғ 912 Ҕ 913 ҕ 914 Җ 915 җ 916 Ҙ 917
+ҙ 918 Қ 919 қ 920 Ҝ 921 ҝ 922 Ҟ 923 ҟ 924 ҡ 925 Ң 926 ң 927 Ҥ 928 ҥ 929 ҩ 930 Ҫ 931 ҫ 932 Ҭ 933 ҭ 934
+Ү 935 ү 936 Ұ 937 ұ 938 Ҳ 939 ҳ 940 ҵ 941 Ҷ 942 ҷ 943 Ҹ 944 ҹ 945 Һ 946 һ 947 Ӏ 948 Ӂ 949 ӂ 950 Ӄ 951
+ӄ 952 Ӆ 953 ӆ 954 Ӈ 955 ӈ 956 Ӊ 957 ӊ 958 Ӌ 959 ӌ 960 ӎ 961 Ӑ 962 ӑ 963 Ӓ 964 ӓ 965 Ӕ 966 ӕ 967 Ӗ 968
+ӗ 969 Ә 970 ә 971 Ӛ 972 ӛ 973 Ӝ 974 ӝ 975 Ӟ 976 ӟ 977 Ӡ 978 ӡ 979 Ӣ 980 ӣ 981 Ӥ 982 ӥ 983 Ӧ 984 ӧ 985
+Ө 986 ө 987 Ӫ 988 ӫ 989 Ӭ 990 ӭ 991 Ӯ 992 ӯ 993 Ӱ 994 ӱ 995 Ӳ 996 ӳ 997 Ӵ 998 ӵ 999 Ӷ 1000 ӷ 1001 Ӹ 1002
+ӹ 1003 Ӻ 1004 ӻ 1005 Ӽ 1006 ӽ 1007 Ӿ 1008 ӿ 1009 א 1010 ב 1011 ג 1012 ד 1013 ט 1014 ך 1015 כ 1016 ל 1017
+ם 1018 מ 1019 ס 1020 ע 1021 ף 1022 פ 1023
+)
+
+# FUNCTION: letters_to_numbers {{{
+# Converts each character of input string into number 0..61
+#
+letters_to_numbers() {
+    local letters="$1" l
+
+    reply=( )
+
+    if [[ "$letters" != [0-9a-zA-ZµºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ]## ]]; then
+        print "Incorrect character detected in: '$letters'. Gcode should consist only from a-z, A-Z, 0-9 characters, plus 962 unicode characters [0-9a-zA-ZµºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ]"
+        return 1
+    fi
+
+    integer number
+    for l in "${(@s::)letters}"; do
+        number="${characters_map[$l]}"
+        reply+=( "$number" )
+    done
+
+    return 0
+}
+# }}}
+# FUNCTION: numbers_to_letters {{{
+# Converts array of numbers into string [0-9a-zA-Z<unicode chars>]+
+numbers_to_letters() {
+    REPLY=""
+    integer i
+    for i in "$@"; do
+        if [[ "$i" -lt 0 || "$i" -gt 1023 ]]; then
+            print "Incorrect number during character conversion: $i"
+            return 1
+        fi
+        REPLY+="${characters[i+1]}"
+    done
+
+    return 0
+}
+# }}}
+# FUNCTION: decode_gcode {{{
+# Turns gcode into bits
+decode_gcode() {
+    local letters="$1"
+
+    local -a bits
+    local workingvar="$letters"
+    while [ "${workingvar//0/}" != "" ]; do
+        div2 "$workingvar"
+        workingvar="${reply[1]}"
+        bits=( "${reply[2]}" "${bits[@]}" )
+        # print "After div $workingvar/${reply[2]}"
+    done
+    # print "Bits of the letters $letters are: ${(j::)bits[@]}"
+    reply=( "${bits[@]}" )
+}
+# }}}
+# FUNCTION: get_integer_from_base_1024 {{{
+# Converts given base-1024 string into integer
+# Warning: it tagets integer (signed), so
+# the size of number is limited here (while
+# decode_gcode generates series of bits of
+# arbitrary length)
+get_integer_from_base_1024() {
+    local letters="$1"
+    local -a bits
+    local workingvar="$letters"
+
+    # Get base-2 generated array consisting of 1 and 0
+    while [ "${workingvar//0/}" != "" ]; do
+        div2 "$workingvar"
+        workingvar="${reply[1]}"
+        bits=( "${reply[2]}" "${bits[@]}" )
+    done
+
+    # Now sum up the obtained 0 and 1
+    integer i mul=1 size="${#bits}"
+    REPLY="0"
+    for (( i=size; i>=1; i-- )); do
+        REPLY=$(( REPLY + bits[i]*mul ))
+        mul=$(( mul * 2 ))
+    done
+
+    # TODO: detect overflow and other problems
+    return 0
+}
+# }}}
+# FUNCTION: encode_gcode_str01 {{{
+# Takes string of 0 and 1 and encodes it to base-1024
+# number expressed via 0-9a-zA-Z<Unicode chars>
+#
+encode_gcode_str01() {
+    str_01_to_24-bit_pack_numbers "$1"
+    encode_gcode_24-bit_pack_numbers "${reply[@]}"
+
+}
+# }}}
+# FUNCTION: encode_gcode_arr01 {{{
+# Takes array (positional parameters) of 0 and 1 and encodes
+# it to base-1024 number expressed via 0-9a-zA-Z<Unicode chars>
+#
+encode_gcode_arr01() {
+    arr_01_to_24-bit_pack_numbers "$@"
+    encode_gcode_24-bit_pack_numbers "${reply[@]}"
+}
+# }}}
+# FUNCTION: encode_gcode_24-bit_pack_numbers {{{
+# Takes 24-bit pack numbers and encodes them to base-1024
+# number expressed via 0-9a-zA-Z<Unicode chars>
+#
+encode_gcode_24-bit_pack_numbers() {
+    local -a numbers
+    numbers=( "$@" )
+
+    local -a nums_base1024 workingvar
+    workingvar=( "${numbers[@]}" )
+
+    integer all_zero=1 i
+    for i in "${workingvar[@]}"; do
+        if [[ "$i" -ne 0 ]]; then
+            all_zero=0
+            break
+        fi
+    done
+
+    while (( all_zero != 1 )); do
+        div_24-bit_pack_numbers_1024 "${workingvar[@]}"
+        workingvar=( "${reply[@]}" )
+        nums_base1024=( "$REPLY" "${nums_base1024[@]}" )
+
+        # Check if workingvar is all zero
+        all_zero=1
+        for i in "${workingvar[@]}"; do
+            if [[ "$i" -ne 0 ]]; then
+                all_zero=0
+                break
+            fi
+        done
+    done
+
+    # print "Base1024 numbers of $str01 are: ${(j:,:)nums_base1024[@]}"
+    numbers_to_letters "${nums_base1024[@]}" # Result in $REPLY
+    reply=( "${nums_base1024[@]}" )          # Additional result
+}
+# }}}
+# FUNCTION: div2 {{{
+# $1 - gcode's letters
+# $reply - ( "gcode's letters after division" "remainder 0 or 1" )
+div2() {
+
+    #
+    # First translate the letters to numbers and put them into array
+    #
+
+    local letters="$1"
+    local -a numbers
+    letters_to_numbers "$letters" || return 1
+    numbers=( "${reply[@]}" )
+
+    #
+    # Now operate on the array performing long-division
+    #
+
+    local -a result
+    result=()
+
+    integer prepared_for_division="${numbers[1]}" input
+    for input in ${(@)numbers[2,-1]} 0; do
+        integer quotient=prepared_for_division/2
+
+        result+=( "$quotient" )
+
+        integer recovered=$(( quotient*2 ))
+        integer subtracted=prepared_for_division-recovered
+
+        prepared_for_division=1024*subtracted+input
+    done
+
+    #
+    # Now convert the result to letters
+    #
+
+    numbers_to_letters "${result[@]}" || return 2
+
+    #
+    # Return
+    #
+
+    reply=( "$REPLY" "$subtracted" )
+
+    return 0
+}
+# }}}
+# FUNCTION: str_01_to_24-bit_pack_numbers {{{
+# Takes STRING of 0 and 1 and converts it to array of numbers
+# that are 24-bit packs taken from right to left, from the string
+#
+str_01_to_24-bit_pack_numbers() {
+    local -a bits
+    bits=( "${(@s::)1}" )
+    arr_01_to_24-bit_pack_numbers "${bits[@]}"
+
+    return 0
+}
+# }}}
+# FUNCTION: arr_01_to_24-bit_pack_numbers {{{
+# Takes ARRAY (@) of 0 and 1 and converts it to array of numbers
+# that are 24-bit packs taken from right to left, from the string
+#
+arr_01_to_24-bit_pack_numbers() {
+    local -a bits pack numbers
+    bits=( "$@" )
+    integer count=0 i size="${#bits}"
+
+    # Take packs of 8 bits, convert each to number and store in array
+    for (( i=size; i>=1; i-- )); do
+        pack=( "$bits[i]" "${pack[@]}" )
+        count+=1
+        (( count < 24 && i != 1 )) && continue
+        count=0
+
+        # Convert the max. 8 bit pack to number
+        integer result=0 p
+        for p in "${pack[@]}"; do
+            result=result*2+p
+        done
+
+        numbers=( "$result" "${numbers[@]}" )
+        pack=( )
+    done
+
+    reply=( "${numbers[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: div_24-bit_pack_numbers_1024 {{{
+# $1 - series of 0 and 1
+# $reply - ( "series of 0 and 1, result of division" "remainder 0 ... 61" )
+div_24-bit_pack_numbers_1024() {
+    local -a numbers
+    numbers=( "$@" )
+
+    # print "Dividing numbers: " "${numbers[@]}"
+
+    #
+    # Now operate on the array performing long-division
+    #
+
+    integer cur last
+    cur=1
+    last="${#numbers}"
+
+    local -a result
+    result=()
+
+    integer prepared_for_division="${numbers[cur]}"
+    while (( 1 )); do
+        integer quotient=prepared_for_division/1024
+
+        result+=( "$quotient" )
+
+        integer recovered=$(( quotient*1024 ))
+        integer subtracted=prepared_for_division-recovered
+
+        cur+=1
+        if (( cur > last )); then
+            break
+        fi
+
+        prepared_for_division=16777216*subtracted+${numbers[cur]}
+    done
+
+    # print "Result of division: " "${result[@]}"
+    # print "Remainder: $subtracted"
+
+    #
+    # Return
+    #
+
+    reply=( "${result[@]}" )
+    REPLY="$subtracted"
+
+    return 0
+}
+# }}}
+# FUNCTION: convert_integer_to_base_1024 {{{
+# Takes number in $1, returns [0-9a-zA-Z<unicode chars>]+
+# - representation of the number in base-1024
+#
+convert_integer_to_base_1024() {
+    integer number="$1"
+    local -a digits
+
+    integer new_number=number
+    integer remainder
+    while (( new_number != 0 )); do
+        remainder=new_number%1024
+        new_number=new_number/1024
+
+        digits+=( "$remainder" )
+    done
+
+    [[ "${#digits}" -eq 0 ]] && digits+=( 0 )
+    [[ "${#digits}" -eq 1 ]] && digits+=( 0 )
+    [[ "${#digits}" -eq 2 ]] && digits+=( 0 )
+
+    digits=( "${(Oa)digits[@]}" )
+
+    numbers_to_letters "${digits[@]}"
+}
+# }}}
+# File: lib/codes_huffman
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+# Map of huffman codes
+
+local -A codes
+codes=(
+"ss"           "100111"     # start or stop
+"file"         "101000"
+"repo_rev_usr" "101111"
+"wordrev"      "101100"
+"site_flags"   "100010"
+"unused1"      "100011"
+"unused2"      "101110"
+"unused3"      "1100110"
+"unused4"      "101101"
+
+":"            "100000"
+"b"            "110001"
+"a"            "110000"
+"9"            "101011"
+"8"            "101010"
+"."            "101001"
+"/"            "100110"
+"_"            "100101"
+"-"            "100100"
+"~"            "100001"
+"x"            "011111"
+"w"            "011110"
+"z"            "011101"
+"y"            "011100"
+"t"            "011011"
+"s"            "011010"
+"v"            "011001"
+"u"            "011000"
+"5"            "010111"
+"4"            "010110"
+"7"            "010101"
+"6"            "010100"
+"1"            "010011"
+"0"            "010010"
+"3"            "010001"
+"2"            "010000"
+"h"            "001111"
+"g"            "001110"
+"j"            "001101"
+"i"            "001100"
+"d"            "001011"
+"c"            "001010"
+"f"            "001001"
+"e"            "001000"
+"p"            "000111"
+"o"            "000110"
+"r"            "000101"
+"q"            "000100"
+"l"            "000011"
+"k"            "000010"
+"n"            "000001"
+"m"            "000000"
+"J"            "1111111"
+"I"            "1111110"
+"L"            "1111101"
+"K"            "1111100"
+"F"            "1111011"
+"E"            "1111010"
+"H"            "1111001"
+"G"            "1111000"
+"R"            "1110111"
+"Q"            "1110110"
+"T"            "1110101"
+"S"            "1110100"
+"N"            "1110011"
+"M"            "1110010"
+"P"            "1110001"
+"O"            "1110000"
+"Z"            "1101111"
+"Y"            "1101110"
+" "            "1101101"
+"A"            "1101100"
+"V"            "1101011"
+"U"            "1101010"
+"X"            "1101001"
+"W"            "1101000"
+"B"            "1100111"
+"D"            "1100101"
+"C"            "1100100"
+)
+
+# Reverse map of Huffman codes
+local -A rcodes
+rcodes=(
+"100111"        "ss"
+"101000"        "file"
+"101111"        "repo_rev_usr"
+"101100"        "wordrev"
+"100010"        "site_flags"
+"100011"        "unused1"
+"101110"        "unused2"
+"1100110"       "unused3"
+"101101"        "unused4"
+
+"100000"        ":"
+"110001"        "b"
+"110000"        "a"
+"101011"        "9"
+"101010"        "8"
+"101001"        "."
+"100110"        "/"
+"100101"        "_"
+"100100"        "-"
+"100001"        "~"
+"011111"        "x"
+"011110"        "w"
+"011101"        "z"
+"011100"        "y"
+"011011"        "t"
+"011010"        "s"
+"011001"        "v"
+"011000"        "u"
+"010111"        "5"
+"010110"        "4"
+"010101"        "7"
+"010100"        "6"
+"010011"        "1"
+"010010"        "0"
+"010001"        "3"
+"010000"        "2"
+"001111"        "h"
+"001110"        "g"
+"001101"        "j"
+"001100"        "i"
+"001011"        "d"
+"001010"        "c"
+"001001"        "f"
+"001000"        "e"
+"000111"        "p"
+"000110"        "o"
+"000101"        "r"
+"000100"        "q"
+"000011"        "l"
+"000010"        "k"
+"000001"        "n"
+"000000"        "m"
+"1111111"       "J"
+"1111110"       "I"
+"1111101"       "L"
+"1111100"       "K"
+"1111011"       "F"
+"1111010"       "E"
+"1111001"       "H"
+"1111000"       "G"
+"1110111"       "R"
+"1110110"       "Q"
+"1110101"       "T"
+"1110100"       "S"
+"1110011"       "N"
+"1110010"       "M"
+"1110001"       "P"
+"1110000"       "O"
+"1101111"       "Z"
+"1101110"       "Y"
+"1101101"       " "
+"1101100"       "A"
+"1101011"       "V"
+"1101010"       "U"
+"1101001"       "X"
+"1101000"       "W"
+"1100111"       "B"
+"1100101"       "D"
+"1100100"       "C"
+)
+
+local -A sites_flags
+sites_flags=(
+# Sites
+    gh  1
+    bb  2
+    gl  3
+# Flags
+)
+
+local -A rsites_flags
+rsites_flags=(
+# Sites
+    1   gh
+    2   bb
+    3   gl
+# Flags
+)
+
+local -A server_site
+server_site=(
+    "github.com"     gh
+    "bitbucket.org"  bb
+    "gitlab.com"     gl
+)
+
+local -A rserver_site
+rserver_site=(
+    gh  "github.com"
+    bb  "bitbucket.org"
+    gl  "gitlab.com"
+)
+
+local -A proto_code
+proto_code=(
+    ssh     000
+    git     001
+    http    010
+    https   011
+    ftp     100
+    ftps    101
+    rsync   110
+)
+
+local -A rproto_code
+rproto_code=(
+    000    ssh
+    001    git
+    010    http
+    011    https
+    100    ftp
+    101    ftps
+    110    rsync
+)
+# File: lib/coding_functions
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+# FUNCTION: process_meta_data {{{
+# $1 - bits decoded from gcode
+# $REPLY = bits to skip
+# $reply = ( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+process_meta_data() {
+    local -a bits
+    bits=( "$@" )
+    integer size="$#" inline=0
+
+    bits=( "${(Oa)bits[@]}" )
+    local strbits="${(j::)bits}"
+    integer init_len="${#strbits}"
+
+    # Pop version bits
+    integer ver2="${strbits[1]}"
+    integer ver1="${strbits[2]}"
+    strbits="${strbits[3,-1]}"
+
+    local -A decoded
+    decoded=(
+        file ""
+        rev ""
+        repo ""
+        wordrev ""
+        proto ""
+        user ""
+        site ""
+        site_inline ""
+        flags ""
+        port ""
+        unused1 ""
+        unused2 ""
+        unused3 ""
+        unused4 ""
+        error ""
+    )
+
+    local current_selector="error"
+    integer trylen first=1
+    local mat trystr
+    while (( 1 )); do
+        if (( first )); then
+            mat="site_flags"
+            first=0
+        else
+            mat=""
+            for (( trylen=6; trylen <= 7; trylen ++ )); do
+                # Take substring of len $trylen and check if
+                # it matches any Huffman code
+                trystr="${strbits[1,trylen]}"
+                mat="${rcodes[$trystr]}"
+                [ -n "$mat" ] && break
+            done
+
+            # General failure in decoding the string
+            if [[ -z "$mat" ]]; then
+                REPLY="-1"
+                reply=( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 "" unused4 "" error "" )
+                return 1
+            fi
+
+            # Skip decoded bits
+            strbits="${strbits[trylen+1,-1]}"
+        fi
+
+        # Handle what has been matched, either selector or data
+        case "$mat" in
+            (ss)
+                break
+                ;;
+            (repo_rev_usr)
+                inline=0
+                if [[ "$current_selector" = "repo" ]]; then
+                    current_selector="rev"
+                elif [[ "$current_selector" = "rev" ]]; then
+                    current_selector="user"
+                else
+                    current_selector="repo"
+                fi
+                ;;
+            (file|wordrev)
+                inline=0
+                current_selector="$mat"
+                ;;
+            (site_flags)
+                [[ "$current_selector" = "site_flags" ]] && {
+                    inline=1
+                } || {
+                    inline=0
+                    current_selector="$mat"
+
+                    # Short path for port number - conditional constant 16 bits
+                    if [[ "${strbits[1]}" = "1" ]]; then
+                        local port_bits="${strbits[2,17]}"
+                        decoded[port]=$(( [#10] 2#$port_bits ))
+                        strbits="${strbits[18,-1]}"
+                    else
+                        strbits="${strbits[2,-1]}"
+                    fi
+
+                    # Short path for protocol - always 3 bits
+                    local proto_bits="${strbits[1,3]}"
+                    decoded[proto]="${rproto_code[$proto_bits]}"
+                    strbits="${strbits[4,-1]}"
+                }
+                ;;
+            (unused1|unused2|unused3|unused4)
+                inline=0
+                current_selector="$mat"
+                ;;
+            (*)
+                [[ "$current_selector" = "site_flags" ]] && {
+                    if (( inline )); then
+                        decoded[site_inline]+="$mat"
+                    else
+                        if [[ ${input_characters[(i)$mat]} -gt ${input_characters[(i)3]} ]]; then
+                            mat="${rsites_flags[$mat]}"
+                            [[ -n "${decoded[flags]}" ]] && decoded[flags]+=","
+                            decoded[flags]+="$mat"
+                        else
+                            mat="${rsites_flags[$mat]}"
+                            decoded[site]="$mat"
+                        fi
+                    fi
+                } || {
+                    decoded[$current_selector]+="$mat"
+                }
+                ;;
+        esac
+    done
+
+    REPLY="$(( init_len - ${#strbits} ))"
+    reply=( "${(kv)decoded[@]}" )
+
+    return 0
+}
+# }}}
+# FUNCTION: get_code_data {{{
+#
+# Gets meta data: rev, file, repo and puts it into $reply array
+# REPLY has the revision bits
+get_code_data() {
+    local gcode="$1"
+    decode_gcode "$gcode" || return $?
+
+    local -a bits
+    bits=( "${reply[@]}" )
+
+    process_meta_data "${bits[@]}" || return $?
+
+    # $reply = ( file "" rev "" repo "" wordrev "" proto "" user "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+    # $REPLY contains: number of bits that contained the meta data
+    local -a meta_reply
+    meta_reply=( "${reply[@]}" )
+
+    # Skip bits that were processed as meta data
+    bits=( "${(@)bits[1,-1*REPLY-1]}" )
+
+    REPLY="${bits[*]}"
+    reply=( "${meta_reply[@]}" )
+}
+# }}}
+# FUNCTION: bits_start {{{
+bits_start() {
+    reply=( "${(@s::)codes[ss]}" )
+}
+# }}}
+# FUNCTION: bits_stop {{{
+bits_stop() {
+    reply=( "${(@s::)codes[ss]}" )
+}
+# }}}
+# FUNCTION: bits_rev {{{
+bits_rev() {
+    local -a bits
+    local rev="$1" lt
+
+    for lt in "${(@s::)rev}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in rev name: '$lt', trying to continue"
+        fi
+    done
+
+    # Rev preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_user {{{
+bits_user() {
+    local -a bits
+    local user="$1" lt
+
+    for lt in "${(@s::)user}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in user name: '$lt', trying to continue"
+        fi
+    done
+
+    # Rev preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_path {{{
+bits_path() {
+    local -a bits
+    local file="$1" lt
+
+    for lt in "${(@s::)file}"; do
+        if [[ -n "${codes[$lt]}" ]];then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in file name: '$lt', trying to continue"
+        fi
+    done
+
+    # File preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[file]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_repo {{{
+bits_repo() {
+    local -a bits
+    local repo="$1" lt
+
+    for lt in "${(@s::)repo}"; do
+        if [[ -n "${codes[$lt]}" ]]; then
+            bits+=( "${(@s::)codes[$lt]}" )
+        elif [[ -n "$lt" ]]; then
+            SetMessage "Incorrect character in repo name: '$lt', trying to continue"
+        fi
+    done
+
+    # Repo preamble
+    if [[ "${#bits}" -gt "0" ]]; then
+        bits=( "${(@s::)codes[repo_rev_usr]}" "${bits[@]}" )
+    fi
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_proto_site_port {{{
+bits_proto_site_port() {
+    local -a bits
+    local proto="$1" site="$2" port="$3" lt
+
+    reply=()
+
+    #
+    # Port
+    #
+
+    if [[ -n "$port" ]]; then
+        bits+=( 1 )
+        local bin_port
+        bin_port=$(( [##2] port ))
+        bin_port="${(l:16::0:)bin_port}"
+        bits+=( ${(@s::)bin_port} )
+    else
+        bits+=( 0 )
+    fi
+
+    #
+    # Protocol
+    #
+
+    local proto_bits="${proto_code[$proto]}"
+    [[ ${#proto_bits} -eq 3 ]] || proto_bits="111"
+    bits+=( "${(@s::)proto_bits}" )
+
+    #
+    # Site
+    #
+
+    integer skip=0
+    if [[ -n "${server_site[${(L)site}]}" ]]; then
+        site="${server_site[${(L)site}]}"
+    else
+        skip=1
+    fi
+
+    if (( skip )); then
+        # Repeated site_flags preamble indicating inline-site
+        bits+=( "${(@s::)codes[site_flags]}" )
+        for lt in "${(@s::)site}"; do
+            if [[ -n "${codes[$lt]}" ]];then
+                bits+=( "${(@s::)codes[$lt]}" )
+            elif [[ -n "$lt" ]]; then
+                SetMessage "Incorrect character in server-part of URL: '$lt', trying to continue"
+            fi
+        done
+    else
+        # Github is the default site
+        [[ "$site" = "gh" ]] && skip=1
+
+        local site_lt="${sites_flags[$site]}"
+        [[ -z "$site_lt" ]] && skip=1
+
+        (( skip )) || bits+=( "${(@s::)codes[$site_lt]}" )
+    fi
+
+    # Site preamble - not added
+
+    reply=( "${bits[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: bits_compare_suffix {{{
+bits_compare_suffix() {
+    local -a long_bits short_bits
+    long_bits=( "${(@s::)1}" )
+    short_bits=( "${(@s::)2}" )
+
+    if [[ "${#long_bits}" -lt "${#short_bits}" ]]; then
+        return 1
+    fi
+
+    # Check if short_bits occur at the end of long_bits
+    integer beg_idx=$(( ${#long_bits} - ${#short_bits} + 1 ))
+    integer end_idx="${#long_bits}"
+    integer l not_equal=0 s=1
+    for (( l=beg_idx; l <= end_idx; l++ )); do
+        if [[ "${long_bits[l]}" != "${short_bits[s]}" ]]; then
+            not_equal=1
+            break
+        fi
+        s+=1
+    done
+
+    return $not_equal
+}
+# }}}
+# FUNCTION: bits_remove_if_start_stop {{{
+bits_remove_if_start_stop() {
+    local -a appendix
+    appendix=( "$@" )
+
+    if bits_compare_suffix "${(j::)appendix}" "${codes[ss]}"; then
+        integer end_idx=$(( ${#appendix} - ${#codes[ss]} ))
+        appendix=( "${(@)appendix[1,end_idx]}" )
+
+        if bits_compare_suffix "${(j::)appendix}" "${codes[ss]}"; then
+            end_idx=$(( ${#appendix} - ${#codes[ss]} ))
+            appendix=( "${(@)appendix[1,end_idx]}" )
+
+            # Two consecutive SS bits occured, correct removal
+        else
+            # We couldn't remove second SS bits, so it means
+            # that there is some meta data, and we should
+            # restore already removed last SS bits
+            appendix+=( "${(@s::)codes[ss]}" )
+        fi
+    else
+        # This shouldn't happen, this function must be
+        # called after adding SS bits
+        reply=( "${appendix[@]}" )
+        return 1
+    fi
+
+    reply=( "${appendix[@]}" )
+    return 0
+}
+# }}}
+# FUNCTION: build_code {{{
+build_code() {
+    local proto="$1" user="$2" site="$3" port="$4" repo="$5" rev="$6" file_path="$7"
+
+    local -a bits appendix
+
+    bits_proto_site_port "$proto" "$site" "$port"
+    appendix+=( "${reply[@]}" )
+
+    # Repo is ensured to be always appended, even if somehow
+    # empty (should not happen)
+    bits_repo "$repo"
+    [[ "${#reply}" -gt 0 ]] && appendix+=( "${reply[@]}" ) || appendix+=( "${(@s::)codes[repo_rev_usr]}" )
+
+    # Rev is always appended even if empty, the rationale is
+    # that without rev, url will be probably (...) short anyway.
+    # Also, the main motivation to use giturl is to embed revision
+    bits_rev "$rev"
+    [[ "${#reply}" -gt 0 ]] && appendix+=( "${reply[@]}" ) || appendix+=( "${(@s::)codes[repo_rev_usr]}" )
+
+    # User is normal, optional
+    bits_user "$user"
+    appendix+=( "${reply[@]}" )
+
+    bits_path "$file_path"
+    appendix+=( "${reply[@]}" )
+
+    bits_stop
+    appendix+=( "${reply[@]}" )
+
+    # Paranoid support for empty meta-data
+    bits_remove_if_start_stop "${appendix[@]}"
+    appendix=( "${reply[@]}" )
+
+    appendix=( "${(Oa)appendix[@]}" )
+    # Also include version bits 0 0
+    bits=( "${bits[@]}" "${appendix[@]}" 0 0 )
+    # print "${(j::)bits}"
+
+    encode_gcode_arr01 "${bits[@]}"
+}
+# }}}
+# File: giturl.main
+# vim:ft=zsh:sw=4:et:sts=4
+# -*- mode: zsh -*-
+
+integer GU_HELP=0 GU_VERBOSE=0 GU_QUIET=0 GU_NOANSI=0 GU_DECODE=0
+local GU_PATH GU_REVISION
+local -A opthash
+zparseopts -E -D -A opthash h -help v -verbose q -quiet n -noansi p: -path: r: -revision: d -decode || { echo "Improper options given, see help -h"; exit 1; }
+
+(( ${+opthash[-h]} + ${+opthash[--help]} ))     && GU_HELP=1
+(( ${+opthash[-v]} + ${+opthash[--verbose]} ))  && GU_VERBOSE=1
+(( ${+opthash[-q]} + ${+opthash[--quiet]} ))    && GU_QUIET=1
+(( ${+opthash[-n]} + ${+opthash[--noansi]} ))   && GU_NOANSI=1
+(( ${+opthash[-d]} + ${+opthash[--decode]} ))   && GU_DECODE=1
+(( ${+opthash[-p]} ))                           && GU_PATH=${opthash[-p]}
+(( ${+opthash[--path]} ))                       && GU_PATH=${opthash[--path]}
+(( ${+opthash[-r]} ))                           && GU_REVISION=${opthash[-r]}
+(( ${+opthash[--revision]} ))                   && GU_REVISION=${opthash[--revision]}
+
+(( GU_NOANSI )) && { colors=(); fg=(); bg=(); reset_color=""; }
+
+if (( GU_HELP )); then
+    Help
+    exit 0
+fi
+
+if (( GU_DECODE == 0 )); then
+    local protocol user site port upath
+
+    # Correct matches
+    if [[ "$1" = (#b)(git|http|https|ftp|ftps)://([a-zA-Z0-9._~-]##)(:[0-9]##)(#c0,1)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=${match[1]} site=${match[2]} port=${match[3]#:} upath=${match[4]}
+    elif [[ "$1" = (#b)rsync://([a-zA-Z0-9._~-]##)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=rsync site=${match[1]} upath=${match[2]}
+    elif [[ "$1" = (#b)ssh://([a-zA-Z0-9._~-]##@)(#c0,1)([a-zA-Z0-9._~-]##)(:[0-9]##)(#c0,1)/([a-zA-Z0-9./_~:-]##) ]]; then
+        protocol=ssh user=${match[1]%@} site=${match[2]} port=${match[3]#:} upath=${match[4]}
+    elif [[ "$1" = (#b)([a-zA-Z0-9._~-]##@)(#c0,1)([a-zA-Z0-9._~-]##):([a-zA-Z0-9./_~:-](#c0,1)[a-zA-Z0-9._~:-][a-zA-Z0-9./_~:-]#) ]]; then
+        protocol=ssh user=${match[1]%@} site=${match[2]} upath=${match[3]}
+
+    # Error matches
+    elif [[ "$1" = (#b)(git|http|https|ftp|ftps)://([^/:]##)(:[^/]##)(#c0,1)/(?*) ]]; then
+        if [[ -n "${match[3]}" && "${match[3]}" != :[0-9]## ]]; then
+            print "Incorrect port number: ${match[3]#:}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            else
+                print "Url part: ${match[4]}"
+            fi
+        fi
+        exit 2
+    elif [[ "$1" = (#b)ssh://([^@/]##@)(#c0,1)([^/:]##)(:[^/]##)(#c0,1)/(?*) ]]; then
+        if [[ -n "${match[1]}" && "${match[1]}" != [a-zA-Z0-9._~-]##@ ]]; then
+            print "Forbidden characters used in user name, allowed are [a-zA-Z0-9._~-]"
+            print "Obtained user name: ${match[1]%@}"
+        elif [[ -n "${match[3]}" && "${match[3]}" != :[0-9]## ]]; then
+            print "Incorrect port number: ${match[3]#:}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            else
+                print "Url part: ${match[4]}"
+            fi
+        fi
+        exit 3
+    elif [[ "$1" = (#b)rsync://([^/]##)/(?*) ]]; then
+        print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+        if [[ "${match[1]}" != [a-zA-Z0-9._~-]## ]]; then
+            print "Url part: ${match[1]}"
+        elif [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+            print "Url part: ${match[2]}"
+        fi
+        exit 4
+    elif [[ "$1" != (rsync|git|http|https|ftp|ftps|ssh)://* && $1 = (#b)([^/:]##)://* ]]; then
+        print "Unsupported protocol: ${match[1]}"
+        exit 5
+    elif [[ "$1" != (rsync|git|http|https|ftp|ftps|ssh)://* && "$1" = (#b)([^@/]##@)(#c0,1)([^:]##):(*?) ]]; then
+        if [[ -n "${match[1]}" && "${match[1]}" != [a-zA-Z0-9._~-]##@ ]]; then
+            print "Forbidden characters used in user name, allowed are [a-zA-Z0-9._~-]"
+            print "Obtained user name: ${match[1]%@}"
+        else
+            print "Forbidden characters used in URL, allowed are [a-zA-Z0-9._~-]"
+            if [[ "${match[2]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[2]}"
+            elif [[ "${match[3]}" != [a-zA-Z0-9._~-]## ]]; then
+                print "Url part: ${match[3]}"
+            fi
+        fi
+        exit 6
+    else
+        print "Unrecognized url given: \`$1', aborting"
+        exit 7
+    fi
+
+    (( GU_QUIET )) || { print; PresentData "$protocol" "$user" "$site" "$port" "$upath" "$GU_REVISION" "$GU_PATH"; }
+
+    build_code "$protocol" "$user" "$site" "$port" "$upath" "$GU_REVISION" "$GU_PATH"
+
+    (( GU_QUIET )) || print
+    print $fg[magenta]"gitu://$REPLY"$reset_color
+else
+    local code="$1"
+    [[ "$code" = (#b)gitu://(*) ]] && code="${match[1]}"
+    [[ "$code" = (#b)//(*) ]] && code="${match[1]}"
+
+    if [[ "$code" != [0-9a-zA-ZµºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ]## ]]; then
+        print "${fg[red]}Error in code. First argument should be gitu://... or just gcode (with proper characters: 0-9 a-z A-Z [µºÀ-ÖØ-áãäæ-öøú-ƔƖ-ơƤ-ǃǍ-Ǳǳ-ǵǷ-Ɉɋ-ɏḀ-ẝẟ-ỹỻͻ-ͽΆΈΑ-ΡΣ-ΩΫ-ψϋ-ώϐ-ϒϔ-Ϡϥϧ-ϩϫ-ϲϵϷ-Ϲϻ-ϿЀ-џѡ-ѣѥѫѱ-ѳѵѷѻѽѿ-ҁҋ-ҟҡ-ҥҩ-ҳҵ-һӀ-ӌӎӐ-ӿא-דטך-מס-פ])${reset_color}"
+        exit 10
+    elif get_code_data "$code"; then
+        # $reply = ( file "" rev "" repo "" wordrev "" proto "" site "" site_inline "" flags "" port "" unused1 "" unused2 "" unused3 ""  unused4 "" error "" )
+        local -A mdata
+        mdata=( "${reply[@]}" )
+
+        local site="${mdata[site]}"
+        if [[ -z "$site" ]]; then
+            site="${mdata[site_inline]}"
+            [[ -z "$site" ]] && site="github.com"
+        else
+            site="${rserver_site[$site]}"
+        fi
+
+        if (( GU_QUIET )); then
+            PresentURL "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}" 1
+        else
+            PresentData "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}"
+            print
+            PresentURL "${mdata[proto]}" "${mdata[user]}" "$site" "${mdata[port]}" "${mdata[repo]}" "${mdata[rev]}" "${mdata[file]}"
+        fi
+    else
+        print "${fg[red]}Cannot decode. Apparently, the gcode has correct characters, but the data contained is corrupted${reset_color}"
+        exit 9
+    fi
+fi
+
+exit 0
