@@ -35,9 +35,8 @@ Options:
  -d <c>, --decode <c>    GitURL or gcode to decode
 
 Examples:
-  giturl https://github.com/z-shell/giturl -p lib/codes_huffman
-  giturl -d 3ếЭãѿŒΓȏĤÒṄÅṥҫȜẙПȟϛṄӗŀєþ
-  giturl -d gitu://VЯĦṟěň4ӊǮ4ХƵȽȤẢ4ФḸțḊƵȽȟϛṄӗŀєþ"
+  zgiturl https://github.com/z-shell/giturl -p lib/codes_huffman
+  zgiturl -d gitu://VṅϟƬòĪȗЭÑẩőnїệαЃȯŅǍǴǬї
 }
 # }}}
 # FUNCTION: SetMessage {{{
